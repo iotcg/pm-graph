@@ -923,7 +923,7 @@ def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, 
 			{'userEnteredValue':{'formulaValue':gsperc.format(e['count'], len(testruns))}},
 		]}
 		for host in e['urls']:
-			url = os.path.join(urlhost, e['urls'][host])
+			url = os.path.join(urlhost, e['urls'][host][0])
 			r['values'].append({
 				'userEnteredValue':{'formulaValue':gslink.format(url, host)}
 			})
@@ -1606,10 +1606,12 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 			if len(match) > 0:
 				match[0]['count'] += 1
 				if desc['host'] not in match[0]['urls']:
-					match[0]['urls'][desc['host']] = data['url']
+					match[0]['urls'][desc['host']] = [data['url']]
+				elif data['url'] not in match[0]['urls'][desc['host']]:
+					match[0]['urls'][desc['host']].append(data['url'])
 			else:
 				issues.append({
-					'match': 'NETLOST', 'count': 1, 'urls': {desc['host']: data['url']},
+					'match': 'NETLOST', 'count': 1, 'urls': {desc['host']: [data['url']]},
 					'line': 'NETLOST: network failed to recover after resume, needed restart to retrieve data',
 				})
 		if not data['result']:

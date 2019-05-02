@@ -60,7 +60,7 @@ def check_issue(host, val, issues, testruns, bugdata):
 	for issue in issues:
 		if re.match(val, issue['line']):
 			urls = issue['urls']
-			url = urls[host] if host in urls else ''
+			url = urls[host][0] if host in urls else ''
 			bugdata['found'] = url
 			bugdata['count'] = issue['count']
 			break

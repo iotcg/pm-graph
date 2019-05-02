@@ -952,6 +952,36 @@ class SystemValues:
 					break
 			fp.close()
 		return out
+	def errorSummary(self, errinfo, msg):
+		found = False
+		for entry in errinfo:
+			if re.match(entry['match'], msg):
+				entry['count'] += 1
+				if self.hostname not in entry['urls']:
+					entry['urls'][self.hostname] = [self.htmlfile]
+				elif self.htmlfile not in entry['urls'][self.hostname]:
+					entry['urls'][self.hostname].append(self.htmlfile)
+				found = True
+				break
+		if found:
+			return
+		arr = msg.split()
+		for j in range(len(arr)):
+			if re.match('^[0-9,\-\.]*$', arr[j]):
+				arr[j] = '[0-9,\-\.]*'
+			else:
+				arr[j] = arr[j]\
+					.replace('\\', '\\\\').replace(']', '\]').replace('[', '\[')\
+					.replace('.', '\.').replace('+', '\+').replace('*', '\*')\
+					.replace('(', '\(').replace(')', '\)')
+		mstr = ' '.join(arr)
+		entry = {
+			'line': msg,
+			'match': mstr,
+			'count': 1,
+			'urls': {self.hostname: [self.htmlfile]}
+		}
+		errinfo.append(entry)
 
 sysvals = SystemValues()
 switchvalues = ['enable', 'disable', 'on', 'off', 'true', 'false', '1', '0']
@@ -1107,34 +1137,6 @@ class Data:
 		if len(plist) < 1:
 			return ''
 		return plist[-1]
-	def errorSummary(self, errinfo, msg):
-		found = False
-		for entry in errinfo:
-			if re.match(entry['match'], msg):
-				entry['count'] += 1
-				if sysvals.hostname not in entry['urls']:
-					entry['urls'][sysvals.hostname] = sysvals.htmlfile
-				found = True
-				break
-		if found:
-			return
-		arr = msg.split()
-		for j in range(len(arr)):
-			if re.match('^[0-9,\-\.]*$', arr[j]):
-				arr[j] = '[0-9,\-\.]*'
-			else:
-				arr[j] = arr[j]\
-					.replace('\\', '\\\\').replace(']', '\]').replace('[', '\[')\
-					.replace('.', '\.').replace('+', '\+').replace('*', '\*')\
-					.replace('(', '\(').replace(')', '\)')
-		mstr = ' '.join(arr)
-		entry = {
-			'line': msg,
-			'match': mstr,
-			'count': 1,
-			'urls': {sysvals.hostname: sysvals.htmlfile}
-		}
-		errinfo.append(entry)
 	def turbostatInfo(self):
 		tp = TestProps()
 		out = {'syslpi':'N/A','pkgpc10':'N/A'}
@@ -1149,7 +1151,7 @@ class Data:
 					out['pkgpc10'] = i.split('=')[-1]+'%'
 			break
 		return out
-	def extractErrorInfo(self, issues=0):
+	def extractErrorInfo(self):
 		lf = self.dmesgtext
 		if len(self.dmesgtext) < 1 and sysvals.dmesgfile:
 			lf = sysvals.openlog(sysvals.dmesgfile, 'r')
@@ -1167,19 +1169,19 @@ class Data:
 			msg = m.group('msg')
 			for err in self.errlist:
 				if re.match(self.errlist[err], msg):
-					list.append((err, dir, t, i, i))
+					list.append((msg, err, dir, t, i, i))
 					self.kerror = True
-					if not isinstance(issues, int):
-						self.errorSummary(issues, msg)
 					break
-		for e in list:
-			type, dir, t, idx1, idx2 = e
+		msglist = []
+		for msg, type, dir, t, idx1, idx2 in list:
+			msglist.append(msg)
 			sysvals.vprint('kernel %s found in %s at %f' % (type, dir, t))
 			self.errorinfo[dir].append((type, t, idx1, idx2))
 		if self.kerror:
 			sysvals.dmesglog = True
 		if len(self.dmesgtext) < 1 and sysvals.dmesgfile:
 			lf.close()
+		return msglist
 	def setStart(self, time):
 		self.start = time
 	def setEnd(self, time):
@@ -3995,7 +3997,7 @@ def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
 	for e in sorted(issues, key=lambda v:v['count'], reverse=True):
 		links = []
 		for host in sorted(e['urls']):
-			links.append(tdlink.format(host, e['urls'][host]))
+			links.append(tdlink.format(host, e['urls'][host][0]))
 		# row classes - alternate row color
 		rcls = ['alt'] if num % 2 == 1 else []
 		html += '<tr class="'+(' '.join(rcls))+'">\n' if len(rcls) > 0 else '<tr>\n'
@@ -5852,11 +5854,8 @@ def find_in_html(html, start, end, firstonly=True):
 	return out
 
 def data_from_html(file, outpath, issues, fulldetail=False):
-	if '<html>' not in file:
-		html = open(file, 'r').read()
-		sysvals.htmlfile = os.path.relpath(file, outpath)
-	else:
-		html = file
+	html = open(file, 'r').read()
+	sysvals.htmlfile = os.path.relpath(file, outpath)
 	# extract general info
 	suspend = find_in_html(html, 'Kernel Suspend', 'ms')
 	resume = find_in_html(html, 'Kernel Resume', 'ms')
@@ -5889,7 +5888,9 @@ def data_from_html(file, outpath, issues, fulldetail=False):
 		d = Data(0)
 		d.end = 999999999
 		d.dmesgtext = log.split('\n')
-		d.extractErrorInfo(issues)
+		msglist = d.extractErrorInfo()
+		for msg in msglist:
+			sysvals.errorSummary(issues, msg)
 		if stmp[2] == 'freeze':
 			extra = d.turbostatInfo()
 		elist = dict()
@@ -5907,14 +5908,15 @@ def data_from_html(file, outpath, issues, fulldetail=False):
 		if len(match) > 0:
 			match[0]['count'] += 1
 			if sysvals.hostname not in match[0]['urls']:
-				match[0]['urls'][sysvals.hostname] = sysvals.htmlfile
+				match[0]['urls'][sysvals.hostname] = [sysvals.htmlfile]
+			elif sysvals.htmlfile not in match[0]['urls'][sysvals.hostname]:
+				match[0]['urls'][sysvals.hostname].append(sysvals.htmlfile)
 		else:
 			issues.append({
 				'match': issue, 'count': 1, 'line': issue,
-				'urls': {sysvals.hostname: sysvals.htmlfile},
+				'urls': {sysvals.hostname: [sysvals.htmlfile]},
 			})
 		ilist.append(issue)
-
 	# extract device info
 	devices = dict()
 	for line in html.split('\n'):
