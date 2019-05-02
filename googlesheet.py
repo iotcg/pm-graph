@@ -34,6 +34,7 @@ except:
 
 gdrive = 0
 gsheet = 0
+gslink = '=HYPERLINK("{0}","{1}")'
 deviceinfo = {'suspend':dict(),'resume':dict()}
 
 def errorCheck(line):
@@ -328,7 +329,7 @@ def info(file, data, args):
 		print('WARNING: issues summary is missing:\n%s\nPlease rerun sleepgraph -summary' % ifile)
 	healthCheck(data[-1])
 
-def text_output(data, args):
+def text_output(args, data, buglist, devinfo=False):
 	global deviceinfo
 
 	text = ''
@@ -381,13 +382,27 @@ def text_output(data, args):
 		for e in sorted(issues, key=lambda v:v['count'], reverse=True):
 			text += '   (x%d) %s\n' % (e['count'], e['line'])
 
-	for type in sorted(deviceinfo, reverse=True):
-		text += '\n%-50s %10s %9s %5s %s\n' % (type.upper(), 'WORST', 'AVG', 'COUNT', 'HOST')
-		devlist = deviceinfo[type]
-		for name in sorted(devlist, key=lambda k:devlist[k]['worst'], reverse=True):
-			d = deviceinfo[type][name]
-			text += '%50s %10.3f %9.3f %5d %s\n' % \
-				(d['name'], d['worst'], d['average'], d['count'], d['host'])
+	if args.bugzilla:
+		text += '\n'
+		for id in sorted(buglist, key=lambda k:buglist[k]['matches'], reverse=True):
+			b = buglist[id]
+			text += '%6s: %s\n' % (id, b['desc'])
+			if 'match' not in buglist[id]:
+				continue
+			matches = buglist[id]['match']
+			for m in sorted(matches, key=lambda k:(k['count'], k['host'], k['mode']), reverse=True):
+				text += '    %s %s %s - [%d / %d]\n' % (m['kernel'], m['host'],
+					m['testname'], m['count'], m['total'])
+
+	if devinfo:
+		for type in sorted(deviceinfo, reverse=True):
+			text += '\n%-50s %10s %9s %5s %s\n' % (type.upper(), 'WORST', 'AVG', 'COUNT', 'HOST')
+			devlist = deviceinfo[type]
+			for name in sorted(devlist, key=lambda k:devlist[k]['worst'], reverse=True):
+				d = deviceinfo[type][name]
+				text += '%50s %10.3f %9.3f %5d %s\n' % \
+					(d['name'], d['worst'], d['average'], d['count'], d['host'])
+
 	return text
 
 def get_url(htmlfile, urlprefix):
@@ -404,7 +419,8 @@ def cellColor(errcond, warncond):
 		return 'ff7'
 	return '7f7'
 
-def html_output(data, urlprefix, args):
+def html_output(args, data, buglist):
+	urlprefix = args.urlprefix
 	issues = worst = False
 	html = '<!DOCTYPE html>\n<html>\n<head>\n\
 		<meta http-equiv="content-type" content="text/html; charset=UTF-8">\n\
@@ -547,6 +563,43 @@ def html_output(data, urlprefix, args):
 			html += '%s<td colspan=%d>NONE</td></tr>\n' % (trs, colspan+2)
 		html += '</table></td></tr>\n'
 	html += '</table><br>\n'
+
+	if args.bugzilla:
+		html += 'Open Bugzilla Issues Summary: %d total<br><br>\n' % (len(buglist))
+		html += '<table style="border:1px solid black;">\n'
+		html += '<tr>\n' + th.format('Bugzilla') + th.format('Description') +\
+			th.format('Kernel') + th.format('Host') + th.format('Test Run') +\
+			th.format('Count') + th.format('Failure Rate') + th.format('First Instance') + '</tr>\n'
+		for id in sorted(buglist, key=lambda k:buglist[k]['matches'], reverse=True):
+			b = buglist[id]
+			bugurl = '<a href="%s">%s</a>' % (b['url'], id)
+			trh = '<tr style="background-color:#ccc;border:1px solid black;">'
+			html += '%s\n%s<td colspan=7>%s</td>\n</tr>' % (trh, td.format(bugurl), b['desc'])
+			if 'match' not in buglist[id]:
+				continue
+			num = 0
+			matches = buglist[id]['match']
+			for m in sorted(matches, key=lambda k:(k['kernel'], k['host'], k['mode'])):
+				trs = '<tr style="background-color:#ddd;">\n' if num % 2 == 1 else '<tr>\n'
+				num += 1
+				if m['testlink']:
+					testlink = '<a href="%s">%s</a>' % (m['testlink'], m['testname'])
+				else:
+					testlink = m['testname']
+				if m['html'].startswith('http'):
+					timeline = '<a href="%s">%s</a>' % (m['html'], 'html')
+				else:
+					timeline = m['html']
+				count = '%d' % m['count']
+				rate = '%d/%d (%.2f%%)' % (m['count'], m['total'],
+					100*float(m['count'])/float(m['total']))
+				count = tdmc.format(count, cellColor(m['count'] > 0, False))
+				rate = tdmc.format(rate, cellColor(m['count'] > 0, False))
+				timeline = tdmc.format(timeline, cellColor(m['count'] > 0, False))
+				html += trs + td.format('') + td.format('') +\
+					tdm.format(m['kernel']) + tdm.format(m['host']) +\
+					tdm.format(testlink) + count + rate + timeline + '\n</tr>'
+		html += '</table>\n'
 
 	return html + '</body>\n</html>\n'
 
@@ -833,7 +886,6 @@ def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, 
 
 	# create the headers row
 	gsperc = '=({0}/{1})'
-	gslink = '=HYPERLINK("{0}","{1}")'
 	headers = [
 		['#','Mode','Host','Kernel','Test Start','Result','Kernel Issues','Suspend',
 		'Resume','Worst Suspend Device','Wsdt','Worst Resume Device','Wrdt'],
@@ -1095,10 +1147,37 @@ def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, 
 		return id
 	return sheet['spreadsheetUrl']
 
-def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlprefix):
+def summarizeBuglist(args, data, buglist):
+	urlprefix = args.urlprefix
+	for test in sorted(data, key=lambda v:(v['kernel'],v['host'],v['mode'],v['date'],v['time'])):
+		if 'bugs' not in test:
+			continue
+		testlink = gdrive_link(args.tpath, test)
+		testname = gdrive_path('{mode}-x{count}', test)
+		bugs, total = test['bugs'], test['resdetail']['tests']
+		for b in sorted(bugs, key=lambda v:v['count'], reverse=True):
+			id, count = b['bugid'], b['count']
+			url = os.path.join(urlprefix, b['url']) if urlprefix and b['url'] else b['url']
+			if id not in buglist:
+				buglist[id] = {'desc': b['desc'], 'url': b['bugurl']}
+			if 'match' not in buglist[id]:
+				buglist[id]['match'] = []
+			buglist[id]['match'].append({
+				'kernel': test['kernel'],
+				'host': test['host'],
+				'mode': test['mode'],
+				'count': count,
+				'total': total,
+				'html': url,
+				'testlink': testlink,
+				'testname': testname,
+			})
+			buglist[id]['matches'] = len(buglist[id]['match'])
+
+def createSummarySpreadsheet(args, data, deviceinfo, buglist):
 	global gsheet, gdrive
 
-	gpath = gdrive_path(sumout, data[0])
+	gpath = gdrive_path(args.spath, data[0])
 	dir, title = os.path.dirname(gpath), os.path.basename(gpath)
 	kfid = gdrive_mkdir(dir)
 	if not kfid:
@@ -1136,7 +1215,7 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 			})
 		headrows.append(headrow)
 
-	gslink = '=HYPERLINK("{0}","{1}")'
+	urlprefix = args.urlprefix
 	gslinkval = '=HYPERLINK("{0}",{1})'
 	gsperc = '=({0}/{1})'
 	s0data = [{'values':headrows[0]}]
@@ -1169,20 +1248,17 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 		# test data tab
 		linkcell = dict()
 		for key in ['kernel', 'host', 'mode']:
-			glink = gdrive_link(testout, test, '{%s}'%key)
+			glink = gdrive_link(args.tpath, test, '{%s}'%key)
 			if glink:
 				linkcell[key] = {'formulaValue':gslink.format(glink, test[key])}
 			else:
 				linkcell[key] = {'stringValue':test[key]}
-		glink = gdrive_link(testout, test)
+		glink = gdrive_link(args.tpath, test)
 		gpath = gdrive_path('{date}{time}', test)
-		gdesc = gdrive_path('{mode}-x{count}', test)
 		if glink:
 			linkcell['test'] = {'formulaValue':gslink.format(glink, gpath)}
-			linkcell['desc'] = {'formulaValue':gslink.format(glink, gdesc)}
 		else:
 			linkcell['test'] = {'stringValue':gpath}
-			linkcell['desc'] = {'stringValue':gdesc}
 		rd = test['resdetail']
 		for key in ['pkgpc10', 'syslpi']:
 			if key in test:
@@ -1233,38 +1309,13 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 				{'userEnteredValue':html},
 			]}
 			s1data.append(r)
-		# bugzilla tab
-		if len(buglist) < 1 or 'bugs' not in test:
-			continue
-		bugs, total = test['bugs'], test['resdetail']['tests']
-		for b in sorted(bugs, key=lambda v:v['count'], reverse=True):
-			id, count = b['bugid'], b['count']
-			if urlprefix:
-				url = os.path.join(urlprefix, b['url'])
-				html = {'formulaValue':gslink.format(url, 'html')}
-			else:
-				html = {'stringValue':b['url']}
-			if id not in buglist:
-				buglist[id] = {'desc': b['desc'], 'url': b['bugurl']}
-			if 'match' not in buglist[id]:
-				buglist[id]['match'] = []
-			buglist[id]['match'].append({
-				'kernel': test['kernel'],
-				'host': test['host'],
-				'mode': test['mode'],
-				'test': linkcell['desc'],
-				'count': count,
-				'rate': gsperc.format(count, total),
-				'html': html
-			})
-			buglist[id]['matches'] = len(buglist[id]['match'])
 	# sort the data by count
 	s1data = [{'values':headrows[1]}] + \
 		sorted(s1data, key=lambda k:k['values'][4]['userEnteredValue']['numberValue'], reverse=True)
 
 	# Bugzilla tab
-	sBZdata = [{'values':headrows[4]}]
-	if len(buglist) > 0:
+	if args.bugzilla:
+		sBZdata = [{'values':headrows[4]}]
 		for id in sorted(buglist, key=lambda k:buglist[k]['matches'], reverse=True):
 			b = buglist[id]
 			r = {'values':[
@@ -1282,15 +1333,23 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 				continue
 			matches = buglist[id]['match']
 			for m in sorted(matches, key=lambda k:(k['count'], k['host'], k['mode']), reverse=True):
+				if m['testlink']:
+					testlink = {'formulaValue':gslink.format(m['testlink'], m['testname'])}
+				else:
+					testlink = {'stringValue':m['testname']}
+				if m['html'].startswith('http'):
+					html = {'formulaValue':gslink.format(m['html'], 'html')}
+				else:
+					html = {'stringValue':m['html']}
 				r = {'values':[
 					{'userEnteredValue':{'stringValue':''}},
 					{'userEnteredValue':{'stringValue':''}},
 					{'userEnteredValue':{'stringValue':m['kernel']}},
 					{'userEnteredValue':{'stringValue':m['host']}},
-					{'userEnteredValue':m['test']},
+					{'userEnteredValue':testlink},
 					{'userEnteredValue':{'numberValue':m['count']}},
-					{'userEnteredValue':{'formulaValue':m['rate']}},
-					{'userEnteredValue':m['html']},
+					{'userEnteredValue':{'formulaValue':gsperc.format(m['count'], m['total'])}},
+					{'userEnteredValue':html},
 				]}
 				sBZdata.append(r)
 
@@ -1344,35 +1403,35 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 				]
 			},
 			{
-				'properties': {'sheetId': 3, 'title': 'Suspend Devices'},
+				'properties': {'sheetId': 2, 'title': 'Suspend Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': s23data['suspend']}
 				]
 			},
 			{
-				'properties': {'sheetId': 4, 'title': 'Resume Devices'},
+				'properties': {'sheetId': 3, 'title': 'Resume Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': s23data['resume']}
 				]
 			},
 			{
-				'properties': {'sheetId': 5, 'title': 'Worst Suspend Devices'},
+				'properties': {'sheetId': 4, 'title': 'Worst Suspend Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': s45data['wsd']}
 				]
 			},
 			{
-				'properties': {'sheetId': 6, 'title': 'Worst Resume Devices'},
+				'properties': {'sheetId': 5, 'title': 'Worst Resume Devices'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': s45data['wrd']}
 				]
 			},
 		],
 	}
-	if len(buglist) > 0:
+	if args.bugzilla:
 		data['sheets'].insert(2,
 			{
-				'properties': {'sheetId': 2, 'title': 'Bugzilla'},
+				'properties': {'sheetId': 6, 'title': 'Bugzilla'},
 				'data': [
 					{'startRow': 0, 'startColumn': 0, 'rowData': sBZdata}
 				]
@@ -1422,22 +1481,22 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 22}}},
 		{'autoResizeDimensions': {'dimensions': {'sheetId': 1,
 			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 7}}},
+		{'autoResizeDimensions': {'dimensions': {'sheetId': 2,
+			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 12}}},
 		{'autoResizeDimensions': {'dimensions': {'sheetId': 3,
 			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 12}}},
 		{'autoResizeDimensions': {'dimensions': {'sheetId': 4,
 			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 12}}},
 		{'autoResizeDimensions': {'dimensions': {'sheetId': 5,
 			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 12}}},
-		{'autoResizeDimensions': {'dimensions': {'sheetId': 6,
-			'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 12}}},
 		]
 	}
 
-	if len(buglist) > 0:
+	if args.bugzilla:
 		fmt['requests'].append([
 			{'repeatCell': {
 				'range': {
-					'sheetId': 2, 'startRowIndex': 1,
+					'sheetId': 6, 'startRowIndex': 1,
 					'startColumnIndex': 6, 'endColumnIndex': 7,
 				},
 				'cell': {
@@ -1447,9 +1506,9 @@ def createSummarySpreadsheet(sumout, testout, data, deviceinfo, buglist, urlpref
 				}
 				},
 				'fields': 'userEnteredFormat.numberFormat,userEnteredFormat.horizontalAlignment'}},
-			{'autoResizeDimensions': {'dimensions': {'sheetId': 2,
+			{'autoResizeDimensions': {'dimensions': {'sheetId': 6,
 				'dimension': 'COLUMNS', 'startIndex': 2, 'endIndex': 7}}},
-			{'autoResizeDimensions': {'dimensions': {'sheetId': 2,
+			{'autoResizeDimensions': {'dimensions': {'sheetId': 6,
 				'dimension': 'COLUMNS', 'startIndex': 0, 'endIndex': 1}}}
 		])
 
@@ -1708,11 +1767,12 @@ if __name__ == '__main__':
 
 	buglist = dict()
 	if args.bugzilla:
-		print('Loading open bugzilla issues...')
+		print('Loading open bugzilla issues')
 		buglist = bz.pm_stress_test_issues()
 
 	multitests = []
 	# search for stress test output folders with at least one test
+	print('searching folder for multitest data')
 	for dirname, dirnames, filenames in os.walk(args.folder):
 		for dir in dirnames:
 			if re.match('suspend-[0-9]*-[0-9]*$', dir):
@@ -1722,9 +1782,11 @@ if __name__ == '__main__':
 				break
 	if len(multitests) < 1:
 		doError('no folders matching suspend-%y%m%d-%H%M%S found')
+	print('%d multitest folders found' % len(multitests))
 
 	initGoogleAPIs()
 	if args.create in ['test', 'both']:
+		print('creating test googlesheets')
 		for testinfo in multitests:
 			indir, urlprefix = testinfo
 			if args.genhtml:
@@ -1733,6 +1795,7 @@ if __name__ == '__main__':
 	if args.create == 'test':
 		sys.exit(0)
 
+	print('loading multitest summary files')
 	data = []
 	for testinfo in multitests:
 		indir, urlprefix = testinfo
@@ -1747,17 +1810,20 @@ if __name__ == '__main__':
 			d = deviceinfo[type][name]
 			d['average'] = d['total'] / d['count']
 
+	if args.bugzilla:
+		summarizeBuglist(args, data, buglist)
+
+	print('creating summary')
 	if args.stype == 'sheet':
-		print('creating summary')
-		createSummarySpreadsheet(args.spath, args.tpath, data,
-			deviceinfo, buglist, args.urlprefix)
+		createSummarySpreadsheet(args, data, deviceinfo, buglist)
 		sys.exit(0)
 	elif args.stype == 'html':
-		out = html_output(data, args.urlprefix, args)
+		out = html_output(args, data, buglist)
 	else:
-		out = text_output(data, args)
+		out = text_output(args, data, buglist)
 
 	if args.mail:
+		print('sending output via email')
 		server, sender, receiver, subject = args.mail
 		type = 'text/html' if args.stype == 'html' else 'text'
 		send_mail(server, sender, receiver, type, subject, out)
