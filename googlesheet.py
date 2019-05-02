@@ -574,7 +574,8 @@ def html_output(args, data, buglist):
 			b = buglist[id]
 			bugurl = '<a href="%s">%s</a>' % (b['url'], id)
 			trh = '<tr style="background-color:#ccc;border:1px solid black;">'
-			html += '%s\n%s<td colspan=7>%s</td>\n</tr>' % (trh, td.format(bugurl), b['desc'])
+			html += '%s\n%s<td colspan=7 style="border: 1px solid black;">%s</td>\n</tr>' % \
+				(trh, tdm.format(bugurl), b['desc'])
 			if 'match' not in buglist[id]:
 				continue
 			num = 0
