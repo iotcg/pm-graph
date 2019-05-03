@@ -5330,14 +5330,15 @@ def dmidecode(mempath, fatal=False):
 				continue
 
 	# read in the memory for scanning
-	fp = open(mempath, 'rb')
 	try:
+		fp = open(mempath, 'rb')
 		fp.seek(memaddr)
 		buf = fp.read(memsize)
 	except:
 		if(fatal):
 			doError('DMI table is unreachable, sorry')
 		else:
+			pprint('WARNING: /dev/mem is not readable, ignoring DMI data')
 			return out
 	fp.close()
 
@@ -5360,14 +5361,15 @@ def dmidecode(mempath, fatal=False):
 			return out
 
 	# read in the SM or DMI table
-	fp = open(mempath, 'rb')
 	try:
+		fp = open(mempath, 'rb')
 		fp.seek(base)
 		buf = fp.read(length)
 	except:
 		if(fatal):
 			doError('DMI table is unreachable, sorry')
 		else:
+			pprint('WARNING: /dev/mem is not readable, ignoring DMI data')
 			return out
 	fp.close()
 
@@ -5511,7 +5513,11 @@ def getFPDT(output):
 	i = 0
 	fwData = [0, 0]
 	records = buf[36:]
-	fp = open(sysvals.mempath, 'rb')
+	try:
+		fp = open(sysvals.mempath, 'rb')
+	except:
+		pprint('WARNING: /dev/mem is not readable, ignoring the FPDT data')
+		return False
 	while(i < len(records)):
 		header = struct.unpack('HBB', records[i:i+4])
 		if(header[0] not in rectype):
