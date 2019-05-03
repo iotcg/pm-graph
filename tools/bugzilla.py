@@ -62,7 +62,7 @@ def check_issue(host, val, issues, testruns, bugdata):
 			urls = issue['urls']
 			url = urls[host][0] if host in urls else ''
 			bugdata['found'] = url
-			bugdata['count'] = issue['count']
+			bugdata['count'] = issue['tests']
 			break
 
 def getComparison(mstr):
@@ -247,7 +247,7 @@ def bugzilla_check(buglist, desc, testruns, issues):
 		out.append(bugdata)
 	return out
 
-def html_table(bugs, desc):
+def html_table(testruns, bugs, desc):
 	# generate the html
 	th = '\t<th>{0}</th>\n'
 	td = '\t<td align={0}>{1}</td>\n'
@@ -257,9 +257,9 @@ def html_table(bugs, desc):
 	html += '<tr>\n' +\
 		th.format('Bugzilla') + th.format('Description') + th.format('Status') +\
 		th.format('Kernel') + th.format('Mode') + th.format('Count') +\
-		th.format('First Instance') + '</tr>\n'
+		th.format('Fail Rate') + th.format('First Instance') + '</tr>\n'
 
-	num = 0
+	total, num = len(testruns), 0
 	for bug in sorted(bugs, key=lambda v:v['count'], reverse=True):
 		bugurl = tdlink.format(bug['id'], bug['bugurl'])
 		if bug['found']:
@@ -268,6 +268,7 @@ def html_table(bugs, desc):
 		else:
 			status = td.format('center nowrap style="color:#080;"', 'ISSUE NOT FOUND')
 			timeline = ''
+		rate = '%d/%d (%.2f%%)' % (bug['count'], total, 100*float(bug['count'])/float(total))
 		# row classes - alternate row color
 		rcls = ['alt'] if num % 2 == 1 else []
 		html += '<tr class="'+(' '.join(rcls))+'">\n' if len(rcls) > 0 else '<tr>\n'
@@ -277,6 +278,7 @@ def html_table(bugs, desc):
 		html += td.format('center', desc['kernel'])		# kernel
 		html += td.format('center', desc['mode'])		# mode
 		html += td.format('center', bug['count'])		# count
+		html += td.format('center', rate)				# fail rate
 		html += td.format('center nowrap', timeline)	# timeline
 		html += '</tr>\n'
 		num += 1

@@ -161,7 +161,7 @@ def infoIssues(folder, file, basename):
 	for issue in tables[0].split('<tr'):
 		if '<th>' in issue:
 			# check for requried columns
-			colidx = columnMap(file, issue, ['issue', 'count', 'first instance'])
+			colidx = columnMap(file, issue, ['issue', 'count', 'tests', 'first instance'])
 			continue
 		if len(colidx) == 0 or '<td' not in issue or '</td>' not in issue:
 			continue
@@ -171,6 +171,7 @@ def infoIssues(folder, file, basename):
 			url = os.path.relpath(file.replace(basename, x.group('u')), folder)
 		issues.append({
 			'count': int(values[colidx['count']]),
+			'tests': int(values[colidx['tests']]),
 			'line': values[colidx['issue']],
 			'url': url,
 		})
@@ -380,7 +381,7 @@ def text_output(args, data, buglist, devinfo=False):
 		text += '   Issues found in dmesg logs:\n'
 		issues = test['issues']
 		for e in sorted(issues, key=lambda v:v['count'], reverse=True):
-			text += '   (x%d) %s\n' % (e['count'], e['line'])
+			text += '   (x%d t%d) %s\n' % (e['count'], e['tests'], e['line'])
 
 	if args.bugzilla:
 		text += '\n'
@@ -556,9 +557,9 @@ def html_output(args, data, buglist):
 		html += '%s<td colspan=%d style="width:90%%;"><b>Issues found</b></td><td><b>Count</b></td><td><b>html</b></td>\n</tr>' % (trs, colspan)
 		issues = test['issues']
 		if len(issues) > 0:
-			for e in sorted(issues, key=lambda v:v['count'], reverse=True):
+			for e in sorted(issues, key=lambda v:v['tests'], reverse=True):
 				html += '%s<td colspan=%d style="font: 12px Courier;">%s</td><td>%d times</td><td>%s</td></tr>\n' % \
-					(trs, colspan, e['line'], e['count'], get_url(e['url'], urlprefix))
+					(trs, colspan, e['line'], e['tests'], get_url(e['url'], urlprefix))
 		else:
 			html += '%s<td colspan=%d>NONE</td></tr>\n' % (trs, colspan+2)
 		html += '</table></td></tr>\n'
@@ -836,7 +837,7 @@ def formatSpreadsheet(id):
 		'repeatCell': {
 			'range': {
 				'sheetId': 2, 'startRowIndex': 1,
-				'startColumnIndex': 3, 'endColumnIndex': 4,
+				'startColumnIndex': 4, 'endColumnIndex': 5,
 			},
 			'cell': {
 				'userEnteredFormat': {
@@ -890,7 +891,7 @@ def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, 
 	headers = [
 		['#','Mode','Host','Kernel','Test Start','Result','Kernel Issues','Suspend',
 		'Resume','Worst Suspend Device','Wsdt','Worst Resume Device','Wrdt'],
-		['Kernel Issue', 'Hosts', 'Count', 'Rate', 'First Instance'],
+		['Kernel Issue', 'Hosts', 'Count', 'Tests', 'Fail Rate', 'First Instance'],
 		['Device Name', 'Average Time', 'Count', 'Worst Time', 'Host (worst time)', 'Link (worst time)'],
 		['Bugzilla', 'Description', 'Status', 'Count', 'Rate', 'First Instance']
 	]
@@ -915,12 +916,13 @@ def createSpreadsheet(testruns, devall, issues, mybugs, folder, urlhost, title, 
 
 	# assemble the issues in the spreadsheet
 	issuedata = [{'values':headrows[1]}]
-	for e in sorted(issues, key=lambda v:v['count'], reverse=True):
+	for e in sorted(issues, key=lambda v:v['tests'], reverse=True):
 		r = {'values':[
 			{'userEnteredValue':{'stringValue':e['line']}},
 			{'userEnteredValue':{'numberValue':len(e['urls'])}},
 			{'userEnteredValue':{'numberValue':e['count']}},
-			{'userEnteredValue':{'formulaValue':gsperc.format(e['count'], len(testruns))}},
+			{'userEnteredValue':{'numberValue':e['tests']}},
+			{'userEnteredValue':{'formulaValue':gsperc.format(e['tests'], len(testruns))}},
 		]}
 		for host in e['urls']:
 			url = os.path.join(urlhost, e['urls'][host][0])
@@ -1197,7 +1199,7 @@ def createSummarySpreadsheet(args, data, deviceinfo, buglist):
 		['Kernel','Host','Mode','Test Detail','Health','Duration','Avg(t)',
 			'Total','Pass','Fail', 'Hang','Crash','PkgPC10','Syslpi','Smax',
 			'Smed','Smin','Rmax','Rmed','Rmin'],
-		['Host','Mode','Tests','Kernel Issue','Count','Rate','First instance'],
+		['Host','Mode','Kernel Issue','Count','Tests','Fail Rate','First instance'],
 		['Device','Average Time','Count','Worst Time','Host (worst time)','Link (worst time)'],
 		['Device','Count']+hosts,
 		['Bugzilla','Description','Kernel','Host','Test Run','Count','Rate','First instance'],
@@ -1294,7 +1296,7 @@ def createSummarySpreadsheet(args, data, deviceinfo, buglist):
 		if 'issues' not in test:
 			continue
 		issues = test['issues']
-		for e in sorted(issues, key=lambda v:v['count'], reverse=True):
+		for e in sorted(issues, key=lambda v:v['tests'], reverse=True):
 			if urlprefix:
 				url = os.path.join(urlprefix, e['url'])
 				html = {'formulaValue':gslink.format(url, 'html')}
@@ -1303,10 +1305,10 @@ def createSummarySpreadsheet(args, data, deviceinfo, buglist):
 			r = {'values':[
 				{'userEnteredValue':linkcell['host']},
 				{'userEnteredValue':linkcell['mode']},
-				{'userEnteredValue':{'numberValue':test['resdetail']['tests']}},
 				{'userEnteredValue':{'stringValue':e['line']}},
 				{'userEnteredValue':{'numberValue':e['count']}},
-				{'userEnteredValue':{'formulaValue':gsperc.format(e['count'], test['resdetail']['tests'])}},
+				{'userEnteredValue':{'numberValue':e['tests']}},
+				{'userEnteredValue':{'formulaValue':gsperc.format(e['tests'], test['resdetail']['tests'])}},
 				{'userEnteredValue':html},
 			]}
 			s1data.append(r)
@@ -1636,18 +1638,23 @@ def pm_graph_report(indir, outpath, urlprefix, buglist, htmlonly):
 	desc['date'] = begin.strftime('%y%m%d')
 	desc['time'] = begin.strftime('%H%M%S')
 	out = outpath.format(**desc)
+	for issue in issues:
+		tests = 0
+		for host in issue['urls']:
+			tests += len(issue['urls'][host])
+		issue['tests'] = tests
 
 	# check the status of open bugs against this multitest
 	bughtml, mybugs = '', []
 	if len(buglist) > 0:
 		mybugs = bz.bugzilla_check(buglist, desc, testruns, issues)
-		bughtml = bz.html_table(mybugs, desc)
+		bughtml = bz.html_table(testruns, mybugs, desc)
 
 	# create the summary html files
 	title = '%s %s %s' % (desc['host'], desc['kernel'], desc['mode'])
 	sg.createHTMLSummarySimple(testruns,
 		os.path.join(indir, 'summary.html'), title)
-	sg.createHTMLIssuesSummary(issues,
+	sg.createHTMLIssuesSummary(testruns, issues,
 		os.path.join(indir, 'summary-issues.html'), title, bughtml)
 	devall = sg.createHTMLDeviceSummary(testruns,
 		os.path.join(indir, 'summary-devices.html'), title)

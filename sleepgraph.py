@@ -3978,9 +3978,10 @@ def createHTMLDeviceSummary(testruns, htmlfile, title):
 	hf.close()
 	return devall
 
-def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
+def createHTMLIssuesSummary(testruns, issues, htmlfile, title, extra=''):
 	multihost = len([e for e in issues if len(e['urls']) > 1]) > 0
 	html = summaryCSS('Issues Summary - SleepGraph', False)
+	total = len(testruns)
 
 	# generate the html
 	th = '\t<th>{0}</th>\n'
@@ -3988,23 +3989,29 @@ def createHTMLIssuesSummary(issues, htmlfile, title, extra=''):
 	tdlink = '<a href="{1}">{0}</a>'
 	subtitle = '%d issues' % len(issues) if len(issues) > 0 else 'no issues'
 	html += '<div class="stamp">%s (%s)</div><table>\n' % (title, subtitle)
-	html += '<tr>\n' + th.format('Issue')
+	html += '<tr>\n' + th.format('Issue') + th.format('Count')
 	if multihost:
 		html += th.format('Hosts')
-	html += th.format('Count') + th.format('First Instance') + '</tr>\n'
+	html += th.format('Tests') + th.format('Fail Rate') +\
+		th.format('First Instance') + '</tr>\n'
 
 	num = 0
 	for e in sorted(issues, key=lambda v:v['count'], reverse=True):
+		testtotal = 0
 		links = []
 		for host in sorted(e['urls']):
 			links.append(tdlink.format(host, e['urls'][host][0]))
+			testtotal += len(e['urls'][host])
+		rate = '%d/%d (%.2f%%)' % (testtotal, total, 100*float(testtotal)/float(total))
 		# row classes - alternate row color
 		rcls = ['alt'] if num % 2 == 1 else []
 		html += '<tr class="'+(' '.join(rcls))+'">\n' if len(rcls) > 0 else '<tr>\n'
 		html += td.format('left', e['line'])		# issue
+		html += td.format('center', e['count'])		# count
 		if multihost:
 			html += td.format('center', len(e['urls']))	# hosts
-		html += td.format('center', e['count'])		# count
+		html += td.format('center', testtotal)		# test count
+		html += td.format('center', rate)			# test rate
 		html += td.format('center nowrap', '<br>'.join(links))	# links
 		html += '</tr>\n'
 		num += 1
@@ -6019,7 +6026,7 @@ def runSummary(subdir, local=True, genhtml=False):
 	pprint('   summary.html         - tabular list of test data found')
 	createHTMLDeviceSummary(testruns, os.path.join(outpath, 'summary-devices.html'), title)
 	pprint('   summary-devices.html - kernel device list sorted by total execution time')
-	createHTMLIssuesSummary(issues, os.path.join(outpath, 'summary-issues.html'), title)
+	createHTMLIssuesSummary(testruns, issues, os.path.join(outpath, 'summary-issues.html'), title)
 	pprint('   summary-issues.html  - kernel issues found sorted by frequency')
 
 # Function: checkArgBool
