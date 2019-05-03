@@ -1800,6 +1800,7 @@ if __name__ == '__main__':
 		for testinfo in multitests:
 			indir, urlprefix = testinfo
 			if args.genhtml:
+				sg.sysvals.usedevsrc = True
 				sg.genHtml(indir)
 			pm_graph_report(indir, args.tpath, urlprefix, buglist, args.htmlonly)
 	if args.create == 'test':

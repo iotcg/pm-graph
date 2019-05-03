@@ -218,6 +218,8 @@ class SystemValues:
 		'acpi_ps_execute_method': { 'args_x86_64': {
 			'fullpath':'+0(+40(%di)):string',
 		}},
+		# mei_me
+		'mei_reset': {},
 		# filesystem
 		'ext4_sync_fs': {},
 		# 80211
@@ -898,20 +900,14 @@ class SystemValues:
 		fp = Popen([cmd, '-v'], stdout=PIPE, stderr=PIPE).stderr
 		out = fp.read().strip()
 		fp.close()
-		return re.match('turbostat version [0-8.]* .*', out)
+		return re.match('turbostat version [0-9\.]* .*', out)
 	def turbostat(self):
 		cmd = self.getExec('turbostat')
 		if not cmd:
 			return 'missing turbostat executable'
-		outfile = '/tmp/pm-graph-turbostat.txt'
-		res = call('%s -o %s -q -S echo freeze > %s' % \
-			(cmd, outfile, self.powerfile), shell=True)
-		if res != 0:
-			return 'turbostat returned %d' % res
-		if not os.path.exists(outfile):
-			return 'turbostat output missing'
-		fp = open(outfile, 'r')
 		text = []
+		fullcmd = '%s -q -S echo freeze > %s' % (cmd, self.powerfile)
+		fp = Popen(['sh', '-c', fullcmd], stdout=PIPE, stderr=PIPE).stderr
 		for line in fp:
 			if re.match('[0-9.]* sec', line):
 				continue
@@ -4986,6 +4982,8 @@ def executeSuspend():
 				else:
 					tdata['error'] = turbo
 			else:
+				if sysvals.haveTurbostat():
+					sysvals.vprint('WARNING: ignoring turbostat in mode "%s"' % mode)
 				pf = open(sysvals.powerfile, 'w')
 				pf.write(mode)
 				# execution will pause here
@@ -6388,6 +6386,8 @@ if __name__ == '__main__':
 			sysvals.ftracelog = True
 		elif(arg == '-turbostat'):
 			sysvals.tstat = True
+			if not sysvals.haveTurbostat():
+				doError('Turbostat command not found')
 		elif(arg == '-verbose'):
 			sysvals.verbose = True
 		elif(arg == '-proc'):
